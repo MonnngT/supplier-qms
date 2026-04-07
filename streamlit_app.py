@@ -7,9 +7,11 @@ import re
 # 设置页面配置
 st.set_page_config(page_title="生产过程数据采集", layout="wide")
 
-# 初始化表单版本号（用于完美清空表单核心技巧）
+# 初始化状态变量（版本号用于清空表单，submit_success用于显示成功提示）
 if "form_version" not in st.session_state:
     st.session_state.form_version = 0
+if "submit_success" not in st.session_state:
+    st.session_state.submit_success = False
 
 # 产品定义
 PRODUCTS = {
@@ -50,6 +52,13 @@ def judge_dimension(dim_str, mode, val_str):
 
 st.title("🛠️ 生产过程数据采集")
 
+# --- 拦截并显示成功提示 ---
+if st.session_state.submit_success:
+    st.success("🎉 数据已成功同步！表单已重置，可以开始下一件的记录。")
+    st.balloons()
+    # 显示完之后立刻把状态改回 False，这样下次随便点点页面就不会再弹气球了
+    st.session_state.submit_success = False
+
 # 1. 侧边栏：基础信息
 with st.sidebar:
     st.header("📋 基础信息")
@@ -79,7 +88,6 @@ for dim in dimensions:
     
     c1.write(f"**{dim}**")
     
-    # 动态 Key：在名称后加上版本号
     mode_key = f"mode_{dim}_{st.session_state.form_version}"
     val_key = f"val_{dim}_{st.session_state.form_version}"
     
@@ -93,7 +101,6 @@ for dim in dimensions:
     if mode == "输入数值":
         val = c3.text_input("数值", key=val_key, label_visibility="collapsed", placeholder="输入...")
     else:
-        # 实配状态下的锁死输入框也要加版本号
         c3.text_input("实配", value="已实配 / OK", disabled=True, key=f"disabled_{dim}_{st.session_state.form_version}", label_visibility="collapsed")
         val = "实配"
         
@@ -107,16 +114,13 @@ for dim in dimensions:
     else:
         c4.warning(f"⚠️ {ok_ng}")
         
-    # 保存数据准备提交
     input_results[dim] = val if mode == "输入数值" else "实配/OK"
-    # 保存状态用于校验是否有漏填
     validation_results[dim] = {"mode": mode, "val": val}
 
 st.markdown("<br>", unsafe_allow_html=True)
 
 # 3. 数据提交逻辑
 if st.button("📤 提交数据到系统", type="primary", use_container_width=True):
-    # 校验漏填项
     empty_fields = [d for d, res in validation_results.items() if res["val"] == "" and res["mode"] == "输入数值"]
     
     if empty_fields:
@@ -138,9 +142,10 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
             updated_df = pd.concat([existing_data, pd.DataFrame([new_row])], ignore_index=True)
             conn.update(worksheet="Sheet1", data=updated_df)
             
-            # 核心修改点：提交成功后，更新版本号，强制重新渲染全新输入框
-            st.session_state.form_version += 1
-            st.rerun() 
+            # --- 提交成功后的操作 ---
+            st.session_state.submit_success = True  # 把成功状态记在备忘录里
+            st.session_state.form_version += 1      # 更新版本号清空表单
+            st.rerun()                              # 强制刷新页面
             
         except Exception as e:
             st.error(f"提交失败: {e}")

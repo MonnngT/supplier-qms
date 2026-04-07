@@ -5,9 +5,9 @@ from datetime import datetime
 import re
 
 # 设置页面配置，展开为宽屏模式更适合显示表格
-st.set_page_config(page_title="供应商生产数据记录系统", layout="wide")
+st.set_page_config(page_title="生产过程数据采集", layout="wide")
 
-# 产品定义 (只保留需要测量的13个尺寸，需与Google Sheets第一行表头完全一致)
+# 产品定义
 PRODUCTS = {
     "Shroud/910/t=2/DX/205/SQ/FL/DIFF/Powder coated/4x14.5/1010x1010": [
         "1070 (0/-3)", "1010 (±1)", "8xM8", "BC φ954 (±1)", "4x φ14.5 (±0.5)",
@@ -43,32 +43,29 @@ def judge_dimension(dim_str, mode, val_str):
         lower = nom + min(t1, t2)
         return "OK" if lower <= val <= upper else "NG"
         
-    # 如果尺寸没有明确的公差标记 (比如 8xM8, R60, R120)
+    # 如果尺寸没有明确的公差标记
     return "需人工确认"
 
 
 # ================= 界面构建 =================
 
-st.title("🛠️ 供应商生产过程数据采集")
+st.title("🛠️ 生产过程数据采集")
 
 # 1. 侧边栏：基础信息与全局日期配置
 with st.sidebar:
     st.header("📋 基础信息")
     selected_part = st.selectbox("选择图纸产品 (Partname)", list(PRODUCTS.keys()))
-    supplier_name = st.text_input("供应商名称", placeholder="请输入单位全称")
-    batch_no = st.text_input("生产批次/编号")
     
     st.markdown("---")
     st.header("⏱️ 测量时间")
-    st.caption("只需设置一次，将应用于本批次所有数据")
-    # 下拉日历与时间选择器
+    st.caption("只需选择日期，系统会在提交时自动补充当前时间点")
+    # 仅保留日期选择
     measure_date = st.date_input("选择测量日期", datetime.today())
-    measure_time = st.time_input("选择测量时间", datetime.now().time())
 
 # 2. 主区域：数据采集表格
 st.subheader(f"📝 尺寸测量记录单: {selected_part}")
 
-# 构建表头 (利用 columns 控制列宽比例)
+# 构建表头
 col1, col2, col3, col4 = st.columns([3, 2, 2, 1.5])
 col1.markdown("**图纸尺寸**")
 col2.markdown("**记录方式**")
@@ -121,30 +118,26 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 # 3. 数据提交逻辑
 if st.button("📤 提交数据到系统", type="primary", use_container_width=True):
-    if not supplier_name or not batch_no:
-        st.error("⚠️ 请在左侧填写【供应商名称】和【批次编号】后再提交！")
-    else:
-        # 将日期和时间合并为字符串格式
-        full_measure_datetime = f"{measure_date} {measure_time.strftime('%H:%M')}"
+    # 自动获取当前时分秒，与所选日期拼接
+    current_time_str = datetime.now().strftime('%H:%M:%S')
+    full_measure_datetime = f"{measure_date} {current_time_str}"
+    
+    # 准备要上传的数据行（不再包含 Supplier 和 BatchNo）
+    new_row = {
+        "记录生成时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "测量时间": full_measure_datetime,
+        "PartName": selected_part,
+        **input_results
+    }
+    
+    # 连接并更新 Google Sheets
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        existing_data = conn.read(worksheet="Sheet1")
+        updated_df = pd.concat([existing_data, pd.DataFrame([new_row])], ignore_index=True)
+        conn.update(worksheet="Sheet1", data=updated_df)
         
-        # 准备要上传的数据行
-        new_row = {
-            "记录生成时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "测量时间": full_measure_datetime,
-            "PartName": selected_part,
-            "Supplier": supplier_name,
-            "BatchNo": batch_no,
-            **input_results
-        }
-        
-        # 连接并更新 Google Sheets
-        try:
-            conn = st.connection("gsheets", type=GSheetsConnection)
-            existing_data = conn.read(worksheet="Sheet1")
-            updated_df = pd.concat([existing_data, pd.DataFrame([new_row])], ignore_index=True)
-            conn.update(worksheet="Sheet1", data=updated_df)
-            
-            st.toast("数据已成功同步至云端表单！", icon="🎉")
-            st.balloons()
-        except Exception as e:
-            st.error(f"提交失败，请检查连接或配置: {e}")
+        st.toast("数据已成功同步至云端表单！", icon="🎉")
+        st.balloons()
+    except Exception as e:
+        st.error(f"提交失败，请检查连接或配置: {e}")

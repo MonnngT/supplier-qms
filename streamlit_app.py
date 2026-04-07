@@ -12,6 +12,10 @@ if "form_version" not in st.session_state:
     st.session_state.form_version = 0
 if "submit_success" not in st.session_state:
     st.session_state.submit_success = False
+if "last_report_csv" not in st.session_state:
+    st.session_state.last_report_csv = None
+if "last_report_filename" not in st.session_state:
+    st.session_state.last_report_filename = ""
 
 # 定义北京时间时区 (UTC+8)
 BEIJING_TZ = timezone(timedelta(hours=8))
@@ -25,7 +29,7 @@ PRODUCTS = {
         "22 (±2)", "2 (±0.2)", "205 (±3)", "30 (±5)", "R60", "R120"
     ],
     
-    # 第二款产品（已将 φ867 更新为 φ867 (±3) ）
+    # 第二款产品
     "61010800303-Shroud/800/t=2/DX/190/SQ/FL/DIFF/Powder coated/4x14.5/910x910/Conduit": [
         "970 (0/-3)", "910 (±1)", "4x φ14.5 (±0.5)", "4x φ8.5 (±0.5)", "BC φ960.5 (±1)",
         "8xM8", "BC φ835 (±1)", "φ797 (±1.5)", "φ867 (±3)", "190 (±2)", 
@@ -65,11 +69,22 @@ def judge_dimension(dim_str, mode, val_str):
 
 st.title("🛠️ 生产过程数据采集")
 
-# --- 拦截并显示成功提示 ---
+# --- 拦截并显示成功提示 & 下载按钮 ---
 if st.session_state.submit_success:
     st.success("🎉 数据已成功同步！表单已重置，可以开始下一件的记录。")
     st.balloons()
-    st.session_state.submit_success = False
+    st.session_state.submit_success = False  # 气球只放一次
+
+# 如果有刚刚生成的报告，展示下载按钮（供用户选择下载或不下载）
+if st.session_state.last_report_csv is not None:
+    st.info("💡 刚才提交的数据已入库。您可点击下方按钮下载本次记录的竖向表格，方便本地查看或存档。")
+    st.download_button(
+        label="📥 下载刚才提交的记录单 (Excel/CSV)",
+        data=st.session_state.last_report_csv,
+        file_name=st.session_state.last_report_filename,
+        mime="text/csv"
+    )
+    st.markdown("---")
 
 # 1. 侧边栏：基础信息
 with st.sidebar:
@@ -128,7 +143,7 @@ for dim in dimensions:
         c4.warning(f"⚠️ {ok_ng}")
         
     input_results[dim] = val if mode == "输入数值" else "实配/OK"
-    validation_results[dim] = {"mode": mode, "val": val}
+    validation_results[dim] = {"mode": mode, "val": val, "ok_ng": ok_ng}
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -141,20 +156,46 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
     else:
         current_time_str = datetime.now(BEIJING_TZ).strftime('%H:%M:%S')
         full_measure_datetime = f"{measure_date} {current_time_str}"
+        record_time = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
         
+        # [步骤A] 准备横向数据（给谷歌表格）
         new_row = {
-            "记录生成时间": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+            "记录生成时间": record_time,
             "测量时间": full_measure_datetime,
             "PartName": selected_part,
             **input_results
         }
         
+        # [步骤B] 准备竖向数据（给用户下载）
+        report_data = []
+        for dim in dimensions:
+            res = validation_results[dim]
+            report_data.append({
+                "图纸尺寸": dim,
+                "记录方式": res["mode"],
+                "实测值": res["val"] if res["mode"] == "输入数值" else "已实配/OK",
+                "判定结果": res["ok_ng"] if res["ok_ng"] != "" else "OK"
+            })
+        
+        report_df = pd.DataFrame(report_data)
+        
+        # 构建带表头说明的CSV文本（加了utf-8-sig让Excel能直接打开且中文不乱码）
+        header_text = f"产品物料号及名称:, {selected_part}\n测量时间:, {full_measure_datetime}\n\n"
+        csv_text = header_text + report_df.to_csv(index=False)
+        csv_bytes = csv_text.encode('utf-8-sig')
+        
+        # 存入 session_state 以便刷新后展示下载按钮
+        st.session_state.last_report_csv = csv_bytes
+        st.session_state.last_report_filename = f"检验记录_{record_time.replace(':', '').replace(' ', '_')}.csv"
+        
         try:
+            # 写入谷歌云端表格
             conn = st.connection("gsheets", type=GSheetsConnection)
             existing_data = conn.read(worksheet="Sheet1")
             updated_df = pd.concat([existing_data, pd.DataFrame([new_row])], ignore_index=True)
             conn.update(worksheet="Sheet1", data=updated_df)
             
+            # 成功后刷新重置界面
             st.session_state.submit_success = True  
             st.session_state.form_version += 1      
             st.rerun()                              

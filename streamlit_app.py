@@ -1,17 +1,20 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import re
 
 # 设置页面配置
 st.set_page_config(page_title="生产过程数据采集", layout="wide")
 
-# 初始化状态变量（版本号用于清空表单，submit_success用于显示成功提示）
+# 初始化状态变量
 if "form_version" not in st.session_state:
     st.session_state.form_version = 0
 if "submit_success" not in st.session_state:
     st.session_state.submit_success = False
+
+# --- 关键修改：定义北京时间时区 (UTC+8) ---
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 # 产品定义
 PRODUCTS = {
@@ -56,7 +59,6 @@ st.title("🛠️ 生产过程数据采集")
 if st.session_state.submit_success:
     st.success("🎉 数据已成功同步！表单已重置，可以开始下一件的记录。")
     st.balloons()
-    # 显示完之后立刻把状态改回 False，这样下次随便点点页面就不会再弹气球了
     st.session_state.submit_success = False
 
 # 1. 侧边栏：基础信息
@@ -66,7 +68,8 @@ with st.sidebar:
     
     st.markdown("---")
     st.header("⏱️ 测量时间")
-    measure_date = st.date_input("选择测量日期", datetime.today())
+    # 默认日期也使用北京时间
+    measure_date = st.date_input("选择测量日期", datetime.now(BEIJING_TZ).date())
 
 # 2. 主区域：数据采集表格
 st.subheader(f"📝 尺寸测量记录单: {selected_part}")
@@ -126,11 +129,12 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
     if empty_fields:
         st.error(f"⚠️ 还有 {len(empty_fields)} 个尺寸未填写，请完成后再提交！")
     else:
-        current_time_str = datetime.now().strftime('%H:%M:%S')
+        # --- 关键修改：获取当前时分秒时，加上 BEIJING_TZ 时区 ---
+        current_time_str = datetime.now(BEIJING_TZ).strftime('%H:%M:%S')
         full_measure_datetime = f"{measure_date} {current_time_str}"
         
         new_row = {
-            "记录生成时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "记录生成时间": datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S"),
             "测量时间": full_measure_datetime,
             "PartName": selected_part,
             **input_results
@@ -142,10 +146,9 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
             updated_df = pd.concat([existing_data, pd.DataFrame([new_row])], ignore_index=True)
             conn.update(worksheet="Sheet1", data=updated_df)
             
-            # --- 提交成功后的操作 ---
-            st.session_state.submit_success = True  # 把成功状态记在备忘录里
-            st.session_state.form_version += 1      # 更新版本号清空表单
-            st.rerun()                              # 强制刷新页面
+            st.session_state.submit_success = True  
+            st.session_state.form_version += 1      
+            st.rerun()                              
             
         except Exception as e:
             st.error(f"提交失败: {e}")

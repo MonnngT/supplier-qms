@@ -7,12 +7,12 @@ import re
 # 设置页面配置，展开为宽屏模式更适合显示表格
 st.set_page_config(page_title="生产过程数据采集", layout="wide")
 
-# 产品定义
+# 产品定义 (已补充 4xφ8.5 和 2 这两个尺寸)
 PRODUCTS = {
     "Shroud/910/t=2/DX/205/SQ/FL/DIFF/Powder coated/4x14.5/1010x1010": [
         "1070 (0/-3)", "1010 (±1)", "8xM8", "BC φ954 (±1)", "4x φ14.5 (±0.5)",
-        "BC φ1140 (±1.5)", "φ1021.1 (±2)", "φ979 (±3)", "22 (±2)", "205 (±3)",
-        "30 (±5)", "R60", "R120"
+        "4x φ8.5 (±0.2)", "BC φ1140 (±1.5)", "φ1021.1 (±2)", "φ979 (±3)", 
+        "22 (±2)", "2 (±0.2)", "205 (±3)", "30 (±5)", "R60", "R120"
     ]
 }
 
@@ -29,7 +29,7 @@ def judge_dimension(dim_str, mode, val_str):
     except ValueError:
         return "格式错误"
         
-    # 匹配对称公差，例如: "1010 (±1)"
+    # 匹配对称公差，例如: "1010 (±1)", "4x φ8.5 (±0.2)"
     m_pm = re.search(r'([\d\.]+)[^\d]*\(\s*±\s*([\d\.]+)[^\d]*\)', dim_str)
     if m_pm:
         nom, tol = float(m_pm.group(1)), float(m_pm.group(2))
@@ -122,7 +122,7 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
     current_time_str = datetime.now().strftime('%H:%M:%S')
     full_measure_datetime = f"{measure_date} {current_time_str}"
     
-    # 准备要上传的数据行（不再包含 Supplier 和 BatchNo）
+    # 准备要上传的数据行
     new_row = {
         "记录生成时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "测量时间": full_measure_datetime,

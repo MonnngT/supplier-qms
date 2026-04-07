@@ -7,6 +7,10 @@ import re
 # 设置页面配置
 st.set_page_config(page_title="生产过程数据采集", layout="wide")
 
+# 初始化表单版本号（用于完美清空表单核心技巧）
+if "form_version" not in st.session_state:
+    st.session_state.form_version = 0
+
 # 产品定义
 PRODUCTS = {
     "Shroud/910/t=2/DX/205/SQ/FL/DIFF/Powder coated/4x14.5/1010x1010": [
@@ -42,13 +46,6 @@ def judge_dimension(dim_str, mode, val_str):
         
     return "需人工确认"
 
-# --- 清空表单的函数 ---
-def clear_form_data(dims):
-    # 重置所有带 key 的输入框状态
-    for dim in dims:
-        st.session_state[f"val_{dim}"] = ""
-        st.session_state[f"mode_{dim}"] = "输入数值"
-
 # ================= 界面构建 =================
 
 st.title("🛠️ 生产过程数据采集")
@@ -73,6 +70,7 @@ col4.markdown("**判定 (OK/NG)**")
 st.divider()
 
 input_results = {}
+validation_results = {}
 dimensions = PRODUCTS[selected_part]
 
 # 动态生成表格行
@@ -81,19 +79,22 @@ for dim in dimensions:
     
     c1.write(f"**{dim}**")
     
-    # 模式选择，添加 key 以便后续重置
+    # 动态 Key：在名称后加上版本号
+    mode_key = f"mode_{dim}_{st.session_state.form_version}"
+    val_key = f"val_{dim}_{st.session_state.form_version}"
+    
     mode = c2.selectbox(
         "模式", ["输入数值", "实配 (Pass)"], 
-        key=f"mode_{dim}", 
+        key=mode_key, 
         label_visibility="collapsed"
     )
     
     val = ""
     if mode == "输入数值":
-        # 输入框添加 key
-        val = c3.text_input("数值", key=f"val_{dim}", label_visibility="collapsed", placeholder="输入...")
+        val = c3.text_input("数值", key=val_key, label_visibility="collapsed", placeholder="输入...")
     else:
-        c3.text_input("实配", value="已实配 / OK", disabled=True, key=f"disabled_{dim}", label_visibility="collapsed")
+        # 实配状态下的锁死输入框也要加版本号
+        c3.text_input("实配", value="已实配 / OK", disabled=True, key=f"disabled_{dim}_{st.session_state.form_version}", label_visibility="collapsed")
         val = "实配"
         
     ok_ng = judge_dimension(dim, mode, val)
@@ -106,14 +107,17 @@ for dim in dimensions:
     else:
         c4.warning(f"⚠️ {ok_ng}")
         
+    # 保存数据准备提交
     input_results[dim] = val if mode == "输入数值" else "实配/OK"
+    # 保存状态用于校验是否有漏填
+    validation_results[dim] = {"mode": mode, "val": val}
 
 st.markdown("<br>", unsafe_allow_html=True)
 
 # 3. 数据提交逻辑
 if st.button("📤 提交数据到系统", type="primary", use_container_width=True):
-    # 检查是否有未填写的数值项目（实配项除外）
-    empty_fields = [d for d, v in input_results.items() if v == "" and st.session_state[f"mode_{d}"] == "输入数值"]
+    # 校验漏填项
+    empty_fields = [d for d, res in validation_results.items() if res["val"] == "" and res["mode"] == "输入数值"]
     
     if empty_fields:
         st.error(f"⚠️ 还有 {len(empty_fields)} 个尺寸未填写，请完成后再提交！")
@@ -134,11 +138,8 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
             updated_df = pd.concat([existing_data, pd.DataFrame([new_row])], ignore_index=True)
             conn.update(worksheet="Sheet1", data=updated_df)
             
-            # 提交成功后的处理：
-            st.success("🎉 数据已成功同步！表单已重置。")
-            
-            # 调用重置函数并刷新页面
-            clear_form_data(dimensions)
+            # 核心修改点：提交成功后，更新版本号，强制重新渲染全新输入框
+            st.session_state.form_version += 1
             st.rerun() 
             
         except Exception as e:

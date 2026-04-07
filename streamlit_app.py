@@ -12,6 +12,8 @@ if "form_version" not in st.session_state:
     st.session_state.form_version = 0
 if "submit_success" not in st.session_state:
     st.session_state.submit_success = False
+if "delete_success" not in st.session_state:
+    st.session_state.delete_success = False
 if "last_report_csv" not in st.session_state:
     st.session_state.last_report_csv = None
 if "last_report_filename" not in st.session_state:
@@ -69,22 +71,25 @@ def judge_dimension(dim_str, mode, val_str):
 
 st.title("🛠️ 生产过程数据采集")
 
-# --- 拦截并显示成功提示 & 下载按钮 ---
+# --- 拦截并显示成功提示 & 删除提示 ---
 if st.session_state.submit_success:
     st.success("🎉 数据已成功同步！表单已重置，可以开始下一件的记录。")
     st.balloons()
-    st.session_state.submit_success = False  # 气球只放一次
+    st.session_state.submit_success = False
 
-# 如果有刚刚生成的报告，展示下载按钮（供用户选择下载或不下载）
+if st.session_state.delete_success:
+    st.toast("🗑️ 该组数据已从云端永久删除！", icon="✅")
+    st.session_state.delete_success = False
+
 if st.session_state.last_report_csv is not None:
-    st.info("💡 刚才提交的数据已入库。您可点击下方按钮下载本次记录的竖向表格，方便本地查看或存档。")
+    st.info("💡 刚才提交的数据已入库。您可点击下方按钮直接下载本次的竖向表格。")
     st.download_button(
-        label="📥 下载刚才提交的记录单 (Excel/CSV)",
+        label="📥 立即下载刚提交的记录单 (Excel)",
         data=st.session_state.last_report_csv,
         file_name=st.session_state.last_report_filename,
         mime="text/csv"
     )
-    st.markdown("---")
+    st.markdown("<br>", unsafe_allow_html=True)
 
 # 1. 侧边栏：基础信息
 with st.sidebar:
@@ -97,7 +102,7 @@ with st.sidebar:
 
 # 2. 主区域：数据采集表格
 st.subheader(f"📝 尺寸测量记录单")
-st.caption(f"当前产品: {selected_part}")
+st.caption(f"当前填写产品: {selected_part}")
 
 col1, col2, col3, col4 = st.columns([3, 2, 2, 1.5])
 col1.markdown("**图纸尺寸**")
@@ -113,17 +118,12 @@ dimensions = PRODUCTS[selected_part]
 # 动态生成表格行
 for dim in dimensions:
     c1, c2, c3, c4 = st.columns([3, 2, 2, 1.5])
-    
     c1.write(f"**{dim}**")
     
     mode_key = f"mode_{dim}_{st.session_state.form_version}"
     val_key = f"val_{dim}_{st.session_state.form_version}"
     
-    mode = c2.selectbox(
-        "模式", ["输入数值", "实配 (Pass)"], 
-        key=mode_key, 
-        label_visibility="collapsed"
-    )
+    mode = c2.selectbox("模式", ["输入数值", "实配 (Pass)"], key=mode_key, label_visibility="collapsed")
     
     val = ""
     if mode == "输入数值":
@@ -158,7 +158,6 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
         full_measure_datetime = f"{measure_date} {current_time_str}"
         record_time = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
         
-        # [步骤A] 准备横向数据（给谷歌表格）
         new_row = {
             "记录生成时间": record_time,
             "测量时间": full_measure_datetime,
@@ -166,7 +165,6 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
             **input_results
         }
         
-        # [步骤B] 准备竖向数据（给用户下载）
         report_data = []
         for dim in dimensions:
             res = validation_results[dim]
@@ -178,27 +176,109 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
             })
         
         report_df = pd.DataFrame(report_data)
-        
-        # 构建带表头说明的CSV文本（加了utf-8-sig让Excel能直接打开且中文不乱码）
         header_text = f"产品物料号及名称:, {selected_part}\n测量时间:, {full_measure_datetime}\n\n"
         csv_text = header_text + report_df.to_csv(index=False)
-        csv_bytes = csv_text.encode('utf-8-sig')
-        
-        # 存入 session_state 以便刷新后展示下载按钮
-        st.session_state.last_report_csv = csv_bytes
+        st.session_state.last_report_csv = csv_text.encode('utf-8-sig')
         st.session_state.last_report_filename = f"检验记录_{record_time.replace(':', '').replace(' ', '_')}.csv"
         
         try:
-            # 写入谷歌云端表格
             conn = st.connection("gsheets", type=GSheetsConnection)
             existing_data = conn.read(worksheet="Sheet1")
             updated_df = pd.concat([existing_data, pd.DataFrame([new_row])], ignore_index=True)
             conn.update(worksheet="Sheet1", data=updated_df)
             
-            # 成功后刷新重置界面
             st.session_state.submit_success = True  
             st.session_state.form_version += 1      
             st.rerun()                              
-            
         except Exception as e:
             st.error(f"提交失败: {e}")
+
+# ================= 历史数据管理 (含删除功能) =================
+st.markdown("---")
+st.subheader("🗄️ 历史记录管理")
+
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    df_history = conn.read(worksheet="Sheet1")
+    
+    # 过滤掉空行
+    df_history = df_history.dropna(subset=["记录生成时间", "PartName"], how="all")
+    
+    if not df_history.empty:
+        # 1. 展示全局表格
+        st.dataframe(df_history.iloc[::-1], use_container_width=True)
+        
+        st.markdown("#### 操作指定的历史记录")
+        # 2. 下拉菜单：选择要操作的记录
+        options = df_history["记录生成时间"].astype(str) + " | " + df_history["PartName"].astype(str)
+        selected_history = st.selectbox("选择目标记录：", options.iloc[::-1])
+        
+        if selected_history:
+            selected_time = selected_history.split(" | ")[0]
+            row_data = df_history[df_history["记录生成时间"] == selected_time].iloc[0]
+            
+            his_part_name = row_data["PartName"]
+            his_measure_time = row_data["测量时间"]
+            
+            # --- 准备下载数据 ---
+            his_csv_bytes = None
+            if his_part_name in PRODUCTS:
+                his_dims = PRODUCTS[his_part_name]
+                his_report_data = []
+                
+                for dim in his_dims:
+                    val = str(row_data.get(dim, ""))
+                    if val == "nan" or val.strip() == "":
+                        val = ""
+                        
+                    if val == "实配/OK":
+                        mode = "实配 (Pass)"
+                        ok_ng = "OK"
+                    else:
+                        mode = "输入数值"
+                        ok_ng = judge_dimension(dim, mode, val) if val else "未填"
+                        
+                    his_report_data.append({
+                        "图纸尺寸": dim, "记录方式": mode, "实测值": val, "判定结果": ok_ng
+                    })
+                
+                his_report_df = pd.DataFrame(his_report_data)
+                his_header = f"产品物料号及名称:, {his_part_name}\n测量时间:, {his_measure_time}\n\n"
+                his_csv_text = his_header + his_report_df.to_csv(index=False)
+                his_csv_bytes = his_csv_text.encode('utf-8-sig')
+                filename_time = str(selected_time).replace(':', '').replace(' ', '_').replace('-', '')
+
+            # --- 渲染“下载”与“删除”按钮组 ---
+            col_action1, col_action2 = st.columns(2)
+            
+            with col_action1:
+                if his_csv_bytes:
+                    st.download_button(
+                        label="⬇️ 下载选中的竖向报告 (Excel)",
+                        data=his_csv_bytes,
+                        file_name=f"历史记录_{filename_time}.csv",
+                        mime="text/csv",
+                        key="download_history_btn",
+                        use_container_width=True
+                    )
+                else:
+                    st.warning("⚠️ 该产品已失效，无法生成竖向报告。")
+                    
+            with col_action2:
+                # 删除按钮
+                if st.button("🗑️ 从云端永久删除此记录", type="primary", use_container_width=True):
+                    # 【核心删除逻辑】：过滤掉选中的这行时间戳，把剩下的数据重新传给谷歌表格
+                    df_cleaned = df_history[df_history["记录生成时间"] != selected_time]
+                    
+                    try:
+                        conn.update(worksheet="Sheet1", data=df_cleaned)
+                        # 删除成功后，记录状态并刷新网页
+                        st.session_state.delete_success = True
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"删除失败请重试: {e}")
+
+    else:
+        st.info("暂无历史提交数据。")
+except Exception as e:
+    st.error(f"无法加载历史数据，请检查网络或谷歌表格连接: {e}")

@@ -24,14 +24,11 @@ BEIJING_TZ = timezone(timedelta(hours=8))
 
 # --- 字典定义 ---
 PRODUCTS = {
-    # 第一款产品
     "61010910300-Shroud/910/t=2/DX/205/SQ/FL/DIFF/Powder coated/4x14.5/1010x1010": [
         "1070 (0/-3)", "1010 (±1)", "8xM8", "BC φ954 (±1)", "4x φ14.5 (±0.5)",
         "4x φ8.5 (±0.2)", "BC φ1140 (±1.5)", "φ1021.1 (±2)", "φ979 (±3)", 
         "22 (±2)", "2 (±0.2)", "205 (±3)", "30 (±5)", "R60", "R120"
     ],
-    
-    # 第二款产品
     "61010800303-Shroud/800/t=2/DX/190/SQ/FL/DIFF/Powder coated/4x14.5/910x910/Conduit": [
         "970 (0/-3)", "910 (±1)", "4x φ14.5 (±0.5)", "4x φ8.5 (±0.5)", "BC φ960.5 (±1)",
         "8xM8", "BC φ835 (±1)", "φ797 (±1.5)", "φ867 (±3)", "190 (±2)", 
@@ -183,7 +180,8 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
         
         try:
             conn = st.connection("gsheets", type=GSheetsConnection)
-            existing_data = conn.read(worksheet="Sheet1")
+            # 【修复1：强制不使用缓存拉取数据】
+            existing_data = conn.read(worksheet="Sheet1", ttl=0)
             updated_df = pd.concat([existing_data, pd.DataFrame([new_row])], ignore_index=True)
             conn.update(worksheet="Sheet1", data=updated_df)
             
@@ -199,7 +197,8 @@ st.subheader("🗄️ 历史记录管理")
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-    df_history = conn.read(worksheet="Sheet1")
+    # 【修复2：强制不使用缓存拉取历史数据】
+    df_history = conn.read(worksheet="Sheet1", ttl=0)
     
     # 过滤掉空行
     df_history = df_history.dropna(subset=["记录生成时间", "PartName"], how="all")
@@ -267,12 +266,11 @@ try:
             with col_action2:
                 # 删除按钮
                 if st.button("🗑️ 从云端永久删除此记录", type="primary", use_container_width=True):
-                    # 【核心删除逻辑】：过滤掉选中的这行时间戳，把剩下的数据重新传给谷歌表格
+                    # 过滤掉选中的这行时间戳，把剩下的数据重新传给谷歌表格
                     df_cleaned = df_history[df_history["记录生成时间"] != selected_time]
                     
                     try:
                         conn.update(worksheet="Sheet1", data=df_cleaned)
-                        # 删除成功后，记录状态并刷新网页
                         st.session_state.delete_success = True
                         st.rerun()
                     except Exception as e:

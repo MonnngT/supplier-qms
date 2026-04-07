@@ -57,7 +57,7 @@ def judge_dimension(dim_str, mode, val_str):
 st.title("🛠️ 生产过程数据采集")
 
 if st.session_state.submit_success:
-    st.success("🎉 数据已成功同步！请在下方查看记录。")
+    st.success("🎉 数据已成功同步！")
     st.balloons()
     st.session_state.submit_success = False
 
@@ -115,10 +115,13 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
         
         try:
             conn = st.connection("gsheets", type=GSheetsConnection)
-            # 提交时使用较低的缓存，确保能读到旧数据进行拼接
             existing_data = conn.read(worksheet="Sheet1", ttl="1s") 
             updated_df = pd.concat([existing_data, pd.DataFrame([new_row])], ignore_index=True)
             conn.update(worksheet="Sheet1", data=updated_df)
+            
+            # 【关键修改】清空缓存，确保历史记录立刻更新
+            st.cache_data.clear()
+            
             st.session_state.submit_success = True  
             st.session_state.form_version += 1      
             st.rerun()                              
@@ -131,8 +134,6 @@ st.subheader("🗄️ 历史记录管理")
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-    # 【核心优化点】：设置 ttl="10s"。 
-    # 意思是 10 秒内刷新页面，都会直接读内存，不请求 Google，大大节省配额。
     df_history = conn.read(worksheet="Sheet1", ttl="10s")
     df_history = df_history.dropna(subset=["记录生成时间", "PartName"], how="all")
     
@@ -167,13 +168,18 @@ try:
                     st.download_button(label="⬇️ 下载竖向报告 (Excel)", data=his_csv_bytes, file_name=f"历史记录_{selected_time}.csv", mime="text/csv", use_container_width=True)
             with col_action2:
                 if st.button("🗑️ 永久删除此记录", type="primary", use_container_width=True):
-                    df_cleaned = df_history[df_history["记录生成时间"] != selected_time]
+                    # 【核心修改点】重新从云端拉取最准的数据进行删除操作
+                    # 避免删除了缓存中存在但云端其实没有的数据
+                    df_latest = conn.read(worksheet="Sheet1", ttl="1s")
+                    df_cleaned = df_latest[df_latest["记录生成时间"] != selected_time]
                     conn.update(worksheet="Sheet1", data=df_cleaned)
+                    
+                    # 【关键修改】成功后立刻“洗脑”缓存
+                    st.cache_data.clear()
+                    
                     st.session_state.delete_success = True
                     st.rerun()
     else:
         st.info("暂无数据。")
 except Exception as e:
-    st.warning(f"由于 Google 访问限制，历史数据加载稍有延迟，请 10 秒后刷新页面即可恢复。")
-    # 打印具体的报错信息在后台，不遮挡用户
-    print(f"DEBUG: {e}")
+    st.warning(f"历史数据加载中或受到 API 限制，请稍候...")

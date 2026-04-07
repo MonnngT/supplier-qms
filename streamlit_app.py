@@ -13,16 +13,18 @@ if "form_version" not in st.session_state:
 if "submit_success" not in st.session_state:
     st.session_state.submit_success = False
 
-# --- 关键修改：定义北京时间时区 (UTC+8) ---
+# 定义北京时间时区 (UTC+8)
 BEIJING_TZ = timezone(timedelta(hours=8))
 
-# 产品定义
+# --- 关键修改：把料号加在名称最前面 ---
 PRODUCTS = {
-    "Shroud/910/t=2/DX/205/SQ/FL/DIFF/Powder coated/4x14.5/1010x1010": [
+    "61010800303-Shroud/910/t=2/DX/205/SQ/FL/DIFF/Powder coated/4x14.5/1010x1010": [
         "1070 (0/-3)", "1010 (±1)", "8xM8", "BC φ954 (±1)", "4x φ14.5 (±0.5)",
         "4x φ8.5 (±0.2)", "BC φ1140 (±1.5)", "φ1021.1 (±2)", "φ979 (±3)", 
         "22 (±2)", "2 (±0.2)", "205 (±3)", "30 (±5)", "R60", "R120"
     ]
+    # 以后如果要加新产品，就按照这个格式在下面继续加：
+    # "料号2-产品名2": ["尺寸1", "尺寸2"...],
 }
 
 # --- 核心智能逻辑：自动判定 OK/NG ---
@@ -68,7 +70,6 @@ with st.sidebar:
     
     st.markdown("---")
     st.header("⏱️ 测量时间")
-    # 默认日期也使用北京时间
     measure_date = st.date_input("选择测量日期", datetime.now(BEIJING_TZ).date())
 
 # 2. 主区域：数据采集表格
@@ -129,7 +130,6 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
     if empty_fields:
         st.error(f"⚠️ 还有 {len(empty_fields)} 个尺寸未填写，请完成后再提交！")
     else:
-        # --- 关键修改：获取当前时分秒时，加上 BEIJING_TZ 时区 ---
         current_time_str = datetime.now(BEIJING_TZ).strftime('%H:%M:%S')
         full_measure_datetime = f"{measure_date} {current_time_str}"
         

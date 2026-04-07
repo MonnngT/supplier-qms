@@ -27,13 +27,13 @@ PRODUCTS = {
         "22 (±2)", "2 (±0.2)", "205 (±3)", "30 (±5)", "R60", "R120"
     ],
     
-    # 第二款产品
+    # 第二款产品 (已按要求更新 61±1 和 2±0.2)
     "61010800303-Shroud/800/t=2/DX/190/SQ/FL/DIFF/Powder coated/4x14.5/910x910/Conduit": [
         "970 (0/-3)", "910 (±1)", "4x φ14.5 (±0.5)", "4x φ8.5 (±0.5)", "BC φ960.5 (±1)",
         "8xM8", "BC φ835 (±1)", "φ797 (±1.5)", "φ867 (±3)", "190 (±2)", 
         "17 (±3)", "R77", "R92", "30 (±1)", "50 (±1)", "100 (±1)", 
-        "106 (±1)", "79 (±1)", "65 (±1)", "51 (±1)", "146 (±1)", 
-        "32 (±1)", "3x φ6 (±0.5)"
+        "106 (±1)", "79 (±1)", "65 (±1)", "61 (±1)", "146 (±1)", 
+        "32 (±1)", "2 (±0.2)", "3x φ6 (±0.5)"
     ]
 }
 
@@ -49,11 +49,13 @@ def judge_dimension(dim_str, mode, val_str):
     except ValueError:
         return "格式错误"
         
+    # 对称公差判定 (±)
     m_pm = re.search(r'([\d\.]+)[^\d]*\(\s*±\s*([\d\.]+)[^\d]*\)', dim_str)
     if m_pm:
         nom, tol = float(m_pm.group(1)), float(m_pm.group(2))
         return "OK" if abs(val - nom) <= tol else "NG"
         
+    # 不对称公差判定 (0/-3 等)
     m_diff = re.search(r'([\d\.]+)[^\d]*\(\s*([+-]?[\d\.]+)\s*/\s*([+-]?[\d\.]+)\s*\)', dim_str)
     if m_diff:
         nom, t1, t2 = float(m_diff.group(1)), float(m_diff.group(2)), float(m_diff.group(3))
@@ -170,13 +172,11 @@ st.subheader("🗄️ 历史记录管理")
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-    # 强制 ttl=0 解决缓存导致看不到最新记录的问题
     df_history = conn.read(worksheet="Sheet1", ttl=0)
     
     df_history = df_history.dropna(subset=["记录生成时间", "PartName"], how="all")
     
     if not df_history.empty:
-        # 展示全局表格
         st.dataframe(df_history.iloc[::-1], use_container_width=True)
         
         st.markdown("#### 操作指定的历史记录")
@@ -190,7 +190,6 @@ try:
             his_part_name = row_data["PartName"]
             his_measure_time = row_data["测量时间"]
             
-            # 准备下载数据
             his_csv_bytes = None
             if his_part_name in PRODUCTS:
                 his_dims = PRODUCTS[his_part_name]
@@ -226,8 +225,6 @@ try:
                         key="download_history_btn",
                         use_container_width=True
                     )
-                else:
-                    st.warning("⚠️ 该产品定义已更改，无法生成历史竖向报告。")
                     
             with col_action2:
                 if st.button("🗑️ 从云端永久删除此记录", type="primary", use_container_width=True):

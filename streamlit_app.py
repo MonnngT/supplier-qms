@@ -119,59 +119,67 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
             st.session_state.submit_success, st.session_state.form_version = True, st.session_state.form_version + 1
             st.rerun()                              
         except Exception as e:
-            st.error(f"提交失败，可能是由于点击太快，请等10秒后再试。")
+            st.error(f"提交失败，请等10秒后再试。")
 
-# ================= 历史记录管理 (增强保护版) =================
+# ================= 历史记录管理 (已加入智能隔离) =================
 st.markdown("---")
-st.subheader("🗄️ 历史记录管理")
+st.subheader(f"🗄️ {selected_part.split('-')[0]} 历史记录") # 标题动态显示当前料号
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-    # 增加缓存到 15s 以进一步降低触发 429 的风险
     df_history = conn.read(worksheet="Sheet1", ttl="15s")
     df_history = df_history.dropna(subset=["测量时间", "PartName"], how="all")
     
     if not df_history.empty:
-        st.dataframe(df_history.iloc[::-1], use_container_width=True)
-        st.markdown("#### 操作指定的历史记录")
-        options = df_history["测量时间"].astype(str) + " | " + df_history["PartName"].astype(str)
-        selected_history = st.selectbox("选择目标记录：", options.iloc[::-1])
+        # 【核心隔离逻辑】：过滤出仅仅属于当前选中产品的数据
+        df_current_part = df_history[df_history["PartName"] == selected_part]
         
-        if selected_history:
-            selected_time = selected_history.split(" | ")[0]
-            row_data = df_history[df_history["测量时间"] == selected_time].iloc[0]
-            his_part_name = row_data["PartName"]
+        if not df_current_part.empty:
+            # 过滤多余的空列（只显示该产品有的尺寸列）
+            df_display = df_current_part.dropna(axis=1, how='all')
             
-            # 下载逻辑
-            his_csv_bytes = None
-            if his_part_name in PRODUCTS:
-                his_dims, his_report_data = PRODUCTS[his_part_name], []
-                for dim in his_dims:
-                    val = str(row_data.get(dim, ""))
-                    if val == "nan" or val.strip() == "": val = ""
-                    mode, ok_ng = ("实配 (Pass)", "OK") if val == "实配/OK" else ("输入数值", judge_dimension(dim, "输入数值", val))
-                    his_report_data.append({"图纸尺寸": dim, "记录方式": mode, "实测值": val, "判定结果": ok_ng})
-                his_report_df = pd.DataFrame(his_report_data)
-                his_header = f"产品物料号及名称:, {his_part_name}\n测量时间:, {selected_time}\n\n"
-                his_csv_bytes = (his_header + his_report_df.to_csv(index=False)).encode('utf-8-sig')
+            st.dataframe(df_display.iloc[::-1], use_container_width=True)
+            st.markdown("#### 操作指定的历史记录")
+            
+            # 下拉菜单现在也只显示当前产品的选项
+            options = df_current_part["测量时间"].astype(str) + " | " + df_current_part["PartName"].astype(str)
+            selected_history = st.selectbox("选择目标记录：", options.iloc[::-1])
+            
+            if selected_history:
+                selected_time = selected_history.split(" | ")[0]
+                row_data = df_current_part[df_current_part["测量时间"] == selected_time].iloc[0]
+                his_part_name = row_data["PartName"]
+                
+                # 下载逻辑
+                his_csv_bytes = None
+                if his_part_name in PRODUCTS:
+                    his_dims, his_report_data = PRODUCTS[his_part_name], []
+                    for dim in his_dims:
+                        val = str(row_data.get(dim, ""))
+                        if val == "nan" or val.strip() == "": val = ""
+                        mode, ok_ng = ("实配 (Pass)", "OK") if val == "实配/OK" else ("输入数值", judge_dimension(dim, "输入数值", val))
+                        his_report_data.append({"图纸尺寸": dim, "记录方式": mode, "实测值": val, "判定结果": ok_ng})
+                    his_report_df = pd.DataFrame(his_report_data)
+                    his_header = f"产品物料号及名称:, {his_part_name}\n测量时间:, {selected_time}\n\n"
+                    his_csv_bytes = (his_header + his_report_df.to_csv(index=False)).encode('utf-8-sig')
 
-            c_act1, c_act2 = st.columns(2)
-            with c_act1:
-                if his_csv_bytes:
-                    st.download_button(label="⬇️ 下载竖向报告 (Excel)", data=his_csv_bytes, file_name=f"记录_{selected_time}.csv", mime="text/csv", use_container_width=True)
-            with c_act2:
-                if st.button("🗑️ 永久删除此记录", type="primary", use_container_width=True):
-                    # 删除前强制拉取最新
-                    df_latest = conn.read(worksheet="Sheet1", ttl="1s")
-                    df_cleaned = df_latest[df_latest["测量时间"] != selected_time]
-                    conn.update(worksheet="Sheet1", data=df_cleaned)
-                    st.cache_data.clear()
-                    st.session_state.delete_success = True
-                    st.rerun()
+                c_act1, c_act2 = st.columns(2)
+                with c_act1:
+                    if his_csv_bytes:
+                        st.download_button(label="⬇️ 下载竖向报告 (Excel)", data=his_csv_bytes, file_name=f"记录_{selected_time}.csv", mime="text/csv", use_container_width=True)
+                with c_act2:
+                    if st.button("🗑️ 永久删除此记录", type="primary", use_container_width=True):
+                        df_latest = conn.read(worksheet="Sheet1", ttl="1s")
+                        df_cleaned = df_latest[df_latest["测量时间"] != selected_time]
+                        conn.update(worksheet="Sheet1", data=df_cleaned)
+                        st.cache_data.clear()
+                        st.session_state.delete_success = True
+                        st.rerun()
+        else:
+            st.info(f"当前产品暂无历史提交数据。")
     else:
-        st.info("暂无数据。")
+        st.info("总数据库中暂无数据。")
 except Exception as e:
-    # 只要是 429 报错，就显示友好的提示
     if "429" in str(e):
         st.warning("⏱️ 访问频率略高，请等待约 15 秒后刷新网页，历史数据将自动恢复显示。")
     else:

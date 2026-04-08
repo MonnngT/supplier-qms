@@ -122,33 +122,43 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
         except Exception as e:
             st.error(f"提交失败，请等待10秒后重试。")
 
-# ================= 历史记录管理 (含特定选择下载/删除) =================
+# ================= 历史记录管理 (表格直接点击版) =================
 st.markdown("---")
 st.subheader(f"🗄️ {selected_part.split('-')[0]} 历史追溯与管理")
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-    # 使用 15s 缓存平衡实时性与 Google API 的配额限制
     df_history = conn.read(worksheet="Sheet1", ttl="15s")
     df_history = df_history.dropna(subset=["测量时间", "PartName"], how="all")
     
     if not df_history.empty:
-        # 【智能过滤】仅显示当前产品的历史记录
+        # 仅显示当前产品的历史记录
         df_current_part = df_history[df_history["PartName"] == selected_part]
         
         if not df_current_part.empty:
-            # 隐藏无关产品的空列，仅展示当前产品的相关尺寸
-            df_display = df_current_part.dropna(axis=1, how='all')
-            st.dataframe(df_display.iloc[::-1], use_container_width=True)
+            st.markdown("👆 **请在下方表格最左侧勾选您需要操作的行记录**")
             
-            st.markdown("#### 🎯 特定记录操作")
-            # 【特定选择】通过下拉菜单选择一条具体的记录
-            options = df_current_part["测量时间"].astype(str) + " | " + df_current_part["PartName"].astype(str)
-            selected_history = st.selectbox("请在下方选中一条特定的记录进行下载或删除：", options.iloc[::-1])
+            # 隐藏空列，并将数据倒序（最新的在最上面），重置索引以便正确匹配勾选项
+            df_display = df_current_part.dropna(axis=1, how='all').iloc[::-1].reset_index(drop=True)
             
-            if selected_history:
-                selected_time = selected_history.split(" | ")[0]
-                row_data = df_current_part[df_current_part["测量时间"] == selected_time].iloc[0]
+            # 开启表格的 "点击选中单行" 功能
+            selection_event = st.dataframe(
+                df_display,
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode="single-row"
+            )
+            
+            # 检查是否有行被选中
+            selected_rows = selection_event.selection.rows
+            
+            if selected_rows:
+                # 获取选中行在表格中的索引
+                selected_idx = selected_rows[0]
+                row_data = df_display.iloc[selected_idx]
+                selected_time = row_data["测量时间"]
+                
+                st.info(f"✅ 当前已选中记录：**{selected_time}**")
                 
                 # --- 准备竖向报告数据 ---
                 his_dims, his_report_data = PRODUCTS[selected_part], []
@@ -166,14 +176,14 @@ try:
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
                     st.download_button(
-                        label=f"⬇️ 下载选中的单条记录报告 (Excel)",
+                        label=f"⬇️ 下载该条记录报告 (Excel)",
                         data=his_csv_bytes,
                         file_name=f"记录_{selected_time.replace(':', '')}.csv",
                         mime="text/csv",
                         use_container_width=True
                     )
                 with col_btn2:
-                    if st.button(f"🗑️ 永久删除选中的单条记录", type="primary", use_container_width=True):
+                    if st.button(f"🗑️ 永久删除该条记录", type="primary", use_container_width=True):
                         # 重新拉取云端最准的数据进行删除操作
                         df_latest = conn.read(worksheet="Sheet1", ttl="1s")
                         df_cleaned = df_latest[df_latest["测量时间"] != selected_time]

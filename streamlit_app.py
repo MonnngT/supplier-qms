@@ -121,7 +121,7 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
         except Exception as e:
             st.error(f"提交失败，请等待10秒后重试。")
 
-# ================= 历史记录管理 (支持批量多选) =================
+# ================= 历史记录管理 (横向对比矩阵版) =================
 st.markdown("---")
 st.subheader(f"🗄️ {selected_part.split('-')[0]} 历史追溯与管理")
 
@@ -134,12 +134,10 @@ try:
         df_current_part = df_history[df_history["PartName"] == selected_part]
         
         if not df_current_part.empty:
-            st.markdown("👆 **请在下方表格最左侧勾选您需要操作的行记录（支持多选）**")
+            st.markdown("👆 **请在下方表格最左侧勾选您需要导出的记录（支持多选比对）**")
             
-            # 数据倒序显示
             df_display = df_current_part.dropna(axis=1, how='all').iloc[::-1].reset_index(drop=True)
             
-            # 【关键修改】：将 selection_mode 改为 "multi-row" 支持批量选中
             selection_event = st.dataframe(
                 df_display,
                 use_container_width=True,
@@ -150,54 +148,53 @@ try:
             selected_rows = selection_event.selection.rows
             
             if selected_rows:
-                # 获取所有被选中的行数据
                 selected_data = df_display.iloc[selected_rows]
-                # 提取所有被选中的时间戳列表
                 selected_times = selected_data["测量时间"].tolist()
                 
-                st.info(f"✅ 当前已选中 **{len(selected_rows)}** 条记录。")
+                st.info(f"✅ 准备生成 **{len(selected_rows)}** 条记录的横向对比报告...")
                 
-                # --- 准备批量下载数据 ---
-                his_dims, his_report_data = PRODUCTS[selected_part], []
+                # --- 【核心升级：构建横向矩阵】 ---
+                his_dims = PRODUCTS[selected_part]
+                # 第一列固定为“图纸尺寸”
+                his_report_data = {"图纸尺寸": his_dims}
                 
-                # 循环遍历每一条被选中的数据
+                # 为选中的每一个时间，生成一列数据
                 for _, row_data in selected_data.iterrows():
-                    sel_time = row_data["测量时间"]
+                    sel_time = str(row_data["测量时间"])
+                    col_values = []
                     for dim in his_dims:
                         val = str(row_data.get(dim, ""))
                         if val == "nan" or val.strip() == "": val = ""
-                        mode, ok_ng = ("实配 (Pass)", "OK") if val == "实配/OK" else ("输入数值", judge_dimension(dim, "输入数值", val))
                         
-                        # 批量下载的表格中加入了"测量时间"列，方便区分不同批次的数据
-                        his_report_data.append({
-                            "测量时间": sel_time, 
-                            "图纸尺寸": dim, 
-                            "记录方式": mode, 
-                            "实测值": val, 
-                            "判定结果": ok_ng if val else "未填"
-                        })
+                        # 格式化输出：实测值 (判定结果)
+                        if val == "实配/OK":
+                            col_values.append("实配/OK")
+                        elif val != "":
+                            ok_ng = judge_dimension(dim, "输入数值", val)
+                            col_values.append(f"{val} ({ok_ng})")
+                        else:
+                            col_values.append("未填")
+                            
+                    # 将这一列加入到字典中，列名为当前的测量时间
+                    his_report_data[sel_time] = col_values
                 
                 his_report_df = pd.DataFrame(his_report_data)
-                his_header = f"产品物料号及名称:, {selected_part}\n批量导出条数:, {len(selected_rows)}条\n\n"
+                his_header = f"产品物料号及名称:, {selected_part}\n对比记录条数:, {len(selected_rows)}条\n\n"
                 his_csv_bytes = (his_header + his_report_df.to_csv(index=False)).encode('utf-8-sig')
 
-                # --- 渲染批量操作按钮 ---
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
                     st.download_button(
-                        label=f"⬇️ 批量下载选中的 {len(selected_rows)} 条记录 (Excel)",
+                        label=f"⬇️ 下载横向对比报告 (Excel)",
                         data=his_csv_bytes,
-                        file_name=f"批量记录_{datetime.now(BEIJING_TZ).strftime('%Y%m%d_%H%M%S')}.csv",
+                        file_name=f"横向对比报告_{datetime.now(BEIJING_TZ).strftime('%Y%m%d_%H%M%S')}.csv",
                         mime="text/csv",
                         use_container_width=True
                     )
                 with col_btn2:
                     if st.button(f"🗑️ 永久删除选中的 {len(selected_rows)} 条记录", type="primary", use_container_width=True):
                         df_latest = conn.read(worksheet="Sheet1", ttl="1s")
-                        
-                        # 【核心批量删除逻辑】：利用 .isin() 找出并剔除所有被选中的时间戳
                         df_cleaned = df_latest[~df_latest["测量时间"].isin(selected_times)]
-                        
                         conn.update(worksheet="Sheet1", data=df_cleaned)
                         st.cache_data.clear() 
                         st.session_state.delete_success = True

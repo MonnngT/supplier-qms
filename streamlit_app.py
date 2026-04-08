@@ -62,7 +62,7 @@ if st.session_state.submit_success:
     st.session_state.submit_success = False
 
 if st.session_state.delete_success:
-    st.toast("🗑️ 特定记录已从云端永久删除！", icon="✅")
+    st.toast("🗑️ 选中的记录已从云端永久删除！", icon="✅")
     st.session_state.delete_success = False
 
 with st.sidebar:
@@ -85,7 +85,6 @@ st.divider()
 input_results, validation_results = {}, {}
 dimensions = PRODUCTS[selected_part]
 
-# 动态表单生成
 for dim in dimensions:
     c1, c2, c3, c4 = st.columns([3, 2, 2, 1.5])
     c1.write(f"**{dim}**")
@@ -116,13 +115,13 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
             existing_data = conn.read(worksheet="Sheet1", ttl="1s") 
             updated_df = pd.concat([existing_data, pd.DataFrame([new_row])], ignore_index=True)
             conn.update(worksheet="Sheet1", data=updated_df)
-            st.cache_data.clear() # 确保历史记录立刻更新
+            st.cache_data.clear() 
             st.session_state.submit_success, st.session_state.form_version = True, st.session_state.form_version + 1
             st.rerun()                              
         except Exception as e:
             st.error(f"提交失败，请等待10秒后重试。")
 
-# ================= 历史记录管理 (表格直接点击版) =================
+# ================= 历史记录管理 (支持批量多选) =================
 st.markdown("---")
 st.subheader(f"🗄️ {selected_part.split('-')[0]} 历史追溯与管理")
 
@@ -132,67 +131,79 @@ try:
     df_history = df_history.dropna(subset=["测量时间", "PartName"], how="all")
     
     if not df_history.empty:
-        # 仅显示当前产品的历史记录
         df_current_part = df_history[df_history["PartName"] == selected_part]
         
         if not df_current_part.empty:
-            st.markdown("👆 **请在下方表格最左侧勾选您需要操作的行记录**")
+            st.markdown("👆 **请在下方表格最左侧勾选您需要操作的行记录（支持多选）**")
             
-            # 隐藏空列，并将数据倒序（最新的在最上面），重置索引以便正确匹配勾选项
+            # 数据倒序显示
             df_display = df_current_part.dropna(axis=1, how='all').iloc[::-1].reset_index(drop=True)
             
-            # 开启表格的 "点击选中单行" 功能
+            # 【关键修改】：将 selection_mode 改为 "multi-row" 支持批量选中
             selection_event = st.dataframe(
                 df_display,
                 use_container_width=True,
                 on_select="rerun",
-                selection_mode="single-row"
+                selection_mode="multi-row"
             )
             
-            # 检查是否有行被选中
             selected_rows = selection_event.selection.rows
             
             if selected_rows:
-                # 获取选中行在表格中的索引
-                selected_idx = selected_rows[0]
-                row_data = df_display.iloc[selected_idx]
-                selected_time = row_data["测量时间"]
+                # 获取所有被选中的行数据
+                selected_data = df_display.iloc[selected_rows]
+                # 提取所有被选中的时间戳列表
+                selected_times = selected_data["测量时间"].tolist()
                 
-                st.info(f"✅ 当前已选中记录：**{selected_time}**")
+                st.info(f"✅ 当前已选中 **{len(selected_rows)}** 条记录。")
                 
-                # --- 准备竖向报告数据 ---
+                # --- 准备批量下载数据 ---
                 his_dims, his_report_data = PRODUCTS[selected_part], []
-                for dim in his_dims:
-                    val = str(row_data.get(dim, ""))
-                    if val == "nan" or val.strip() == "": val = ""
-                    mode, ok_ng = ("实配 (Pass)", "OK") if val == "实配/OK" else ("输入数值", judge_dimension(dim, "输入数值", val))
-                    his_report_data.append({"图纸尺寸": dim, "记录方式": mode, "实测值": val, "判定结果": ok_ng if val else "未填"})
+                
+                # 循环遍历每一条被选中的数据
+                for _, row_data in selected_data.iterrows():
+                    sel_time = row_data["测量时间"]
+                    for dim in his_dims:
+                        val = str(row_data.get(dim, ""))
+                        if val == "nan" or val.strip() == "": val = ""
+                        mode, ok_ng = ("实配 (Pass)", "OK") if val == "实配/OK" else ("输入数值", judge_dimension(dim, "输入数值", val))
+                        
+                        # 批量下载的表格中加入了"测量时间"列，方便区分不同批次的数据
+                        his_report_data.append({
+                            "测量时间": sel_time, 
+                            "图纸尺寸": dim, 
+                            "记录方式": mode, 
+                            "实测值": val, 
+                            "判定结果": ok_ng if val else "未填"
+                        })
                 
                 his_report_df = pd.DataFrame(his_report_data)
-                his_header = f"产品物料号及名称:, {selected_part}\n测量时间:, {selected_time}\n\n"
+                his_header = f"产品物料号及名称:, {selected_part}\n批量导出条数:, {len(selected_rows)}条\n\n"
                 his_csv_bytes = (his_header + his_report_df.to_csv(index=False)).encode('utf-8-sig')
 
-                # --- 渲染特定下载与特定删除按钮 ---
+                # --- 渲染批量操作按钮 ---
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
                     st.download_button(
-                        label=f"⬇️ 下载该条记录报告 (Excel)",
+                        label=f"⬇️ 批量下载选中的 {len(selected_rows)} 条记录 (Excel)",
                         data=his_csv_bytes,
-                        file_name=f"记录_{selected_time.replace(':', '')}.csv",
+                        file_name=f"批量记录_{datetime.now(BEIJING_TZ).strftime('%Y%m%d_%H%M%S')}.csv",
                         mime="text/csv",
                         use_container_width=True
                     )
                 with col_btn2:
-                    if st.button(f"🗑️ 永久删除该条记录", type="primary", use_container_width=True):
-                        # 重新拉取云端最准的数据进行删除操作
+                    if st.button(f"🗑️ 永久删除选中的 {len(selected_rows)} 条记录", type="primary", use_container_width=True):
                         df_latest = conn.read(worksheet="Sheet1", ttl="1s")
-                        df_cleaned = df_latest[df_latest["测量时间"] != selected_time]
+                        
+                        # 【核心批量删除逻辑】：利用 .isin() 找出并剔除所有被选中的时间戳
+                        df_cleaned = df_latest[~df_latest["测量时间"].isin(selected_times)]
+                        
                         conn.update(worksheet="Sheet1", data=df_cleaned)
-                        st.cache_data.clear() # 强制“洗脑”缓存
+                        st.cache_data.clear() 
                         st.session_state.delete_success = True
                         st.rerun()
         else:
-            st.info(f"当前产品 ({selected_part.split('-')[0]}) 暂无历史提交数据。")
+            st.info(f"当前产品 ({selected_part.split('-')[0]}) 暂无历史数据。")
     else:
         st.info("总数据库目前为空。")
 except Exception as e:

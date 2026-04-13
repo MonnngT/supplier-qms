@@ -31,6 +31,14 @@ PRODUCTS = {
         "17 (±3)", "R77", "R92", "30 (±1)", "50 (±1)", "100 (±1)", 
         "106 (±1)", "79 (±1)", "65 (±1)", "61 (±1)", "146 (±1)", 
         "32 (±1)", "2 (±0.2)", "3x φ6 (±0.5)"
+    ],
+    # --- 新增的第三款产品 (完全按照图纸 21 个序号独立展开) ---
+    "61010910304-新产品(请在此修改产品名称)": [
+        "1070 (0/-3)", "1010 (±1)", "φ954 (±1)", "φ914 (±1.5)", "φ22.2 (±0.5)",
+        "φ8.5 (±0.5) - 第1处", "φ8.5 (±0.5) - 第2处", "φ21 (±0.5)", "167.3 (±0.5) - 第1处", 
+        "102.4 (±0.5)", "77.6 (±0.5)", "61.2 (±0.5) - 第1处", "61.2 (±0.5) - 第2处", 
+        "92.6 (±0.5)", "117.4 (±0.5)", "167.3 (±0.5) - 第2处", "M8 Insert Nut", 
+        "205 (±3)", "22 (±2)", "R118", "979 (±3)"
     ]
 }
 
@@ -41,15 +49,19 @@ def judge_dimension(dim_str, mode, val_str):
     try:
         val = float(val_str)
     except ValueError: return "格式错误"
+    
+    # 智能识别带尾缀的情况，提取真实的公差数值
     m_pm = re.search(r'([\d\.]+)[^\d]*\(\s*±\s*([\d\.]+)[^\d]*\)', dim_str)
     if m_pm:
         nom, tol = float(m_pm.group(1)), float(m_pm.group(2))
         return "OK" if abs(val - nom) <= tol else "NG"
+        
     m_diff = re.search(r'([\d\.]+)[^\d]*\(\s*([+-]?[\d\.]+)\s*/\s*([+-]?[\d\.]+)\s*\)', dim_str)
     if m_diff:
         nom, t1, t2 = float(m_diff.group(1)), float(m_diff.group(2)), float(m_diff.group(3))
         upper, lower = nom + max(t1, t2), nom + min(t1, t2)
         return "OK" if lower <= val <= upper else "NG"
+        
     return "需人工确认"
 
 # ================= 界面构建 =================
@@ -121,7 +133,7 @@ if st.button("📤 提交数据到系统", type="primary", use_container_width=T
         except Exception as e:
             st.error(f"提交失败，请等待10秒后重试。")
 
-# ================= 历史记录管理 (横向对比矩阵版) =================
+# ================= 历史记录管理 =================
 st.markdown("---")
 st.subheader(f"🗄️ {selected_part.split('-')[0]} 历史追溯与管理")
 
@@ -134,7 +146,7 @@ try:
         df_current_part = df_history[df_history["PartName"] == selected_part]
         
         if not df_current_part.empty:
-            st.markdown("👆 **请在下方表格最左侧勾选您需要导出的记录（支持多选比对）**")
+            st.markdown("👆 **请在下方表格最左侧勾选您需要操作的行记录（支持多选）**")
             
             df_display = df_current_part.dropna(axis=1, how='all').iloc[::-1].reset_index(drop=True)
             
@@ -151,14 +163,11 @@ try:
                 selected_data = df_display.iloc[selected_rows]
                 selected_times = selected_data["测量时间"].tolist()
                 
-                st.info(f"✅ 准备生成 **{len(selected_rows)}** 条记录的横向对比报告...")
+                st.info(f"✅ 已选中 **{len(selected_rows)}** 条记录。准备生成横向对比报告...")
                 
-                # --- 【核心升级：构建横向矩阵】 ---
                 his_dims = PRODUCTS[selected_part]
-                # 第一列固定为“图纸尺寸”
                 his_report_data = {"图纸尺寸": his_dims}
                 
-                # 为选中的每一个时间，生成一列数据
                 for _, row_data in selected_data.iterrows():
                     sel_time = str(row_data["测量时间"])
                     col_values = []
@@ -166,7 +175,6 @@ try:
                         val = str(row_data.get(dim, ""))
                         if val == "nan" or val.strip() == "": val = ""
                         
-                        # 格式化输出：实测值 (判定结果)
                         if val == "实配/OK":
                             col_values.append("实配/OK")
                         elif val != "":
@@ -175,7 +183,6 @@ try:
                         else:
                             col_values.append("未填")
                             
-                    # 将这一列加入到字典中，列名为当前的测量时间
                     his_report_data[sel_time] = col_values
                 
                 his_report_df = pd.DataFrame(his_report_data)
@@ -185,7 +192,7 @@ try:
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
                     st.download_button(
-                        label=f"⬇️ 下载横向对比报告 (Excel)",
+                        label=f"⬇️ 下载选中数据的横向对比报告 (Excel)",
                         data=his_csv_bytes,
                         file_name=f"横向对比报告_{datetime.now(BEIJING_TZ).strftime('%Y%m%d_%H%M%S')}.csv",
                         mime="text/csv",

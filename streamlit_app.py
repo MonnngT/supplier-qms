@@ -52,8 +52,12 @@ PRODUCTS = {
     ]
 }
 
+OK_NG_INSPECTIONS = {"焊接处目视检查是否合格"}
+
 # --- 自动判定逻辑 ---
 def judge_dimension(dim_str, mode, val_str):
+    if dim_str in OK_NG_INSPECTIONS:
+        return val_str if val_str in ("OK", "NG") else ""
     if mode == "实配 (Pass)": return "OK"
     if not val_str or not val_str.strip(): return ""
     try:
@@ -109,17 +113,22 @@ dimensions = PRODUCTS[selected_part]
 for dim in dimensions:
     c1, c2, c3, c4 = st.columns([3, 2, 2, 1.5])
     c1.write(f"**{dim}**")
-    mode = c2.selectbox("模式", ["输入数值", "实配 (Pass)"], key=f"m_{dim}_{st.session_state.form_version}", label_visibility="collapsed")
-    if mode == "输入数值":
-        val = c3.text_input("数值", key=f"v_{dim}_{st.session_state.form_version}", label_visibility="collapsed", placeholder="输入...")
+    if dim in OK_NG_INSPECTIONS:
+        mode = "OK/NG"
+        c2.write("目视检查")
+        val = c3.selectbox("结果", ["OK", "NG"], key=f"okng_{dim}_{st.session_state.form_version}", label_visibility="collapsed")
     else:
-        c3.text_input("实配", value="已实配 / OK", disabled=True, key=f"d_{dim}_{st.session_state.form_version}", label_visibility="collapsed")
-        val = "实配"
+        mode = c2.selectbox("模式", ["输入数值", "实配 (Pass)"], key=f"m_{dim}_{st.session_state.form_version}", label_visibility="collapsed")
+        if mode == "输入数值":
+            val = c3.text_input("数值", key=f"v_{dim}_{st.session_state.form_version}", label_visibility="collapsed", placeholder="输入...")
+        else:
+            c3.text_input("实配", value="已实配 / OK", disabled=True, key=f"d_{dim}_{st.session_state.form_version}", label_visibility="collapsed")
+            val = "实配"
     ok_ng = judge_dimension(dim, mode, val)
     if ok_ng == "OK": c4.success("✅ OK")
     elif ok_ng == "NG": c4.error("❌ NG")
     else: c4.write("---")
-    input_results[dim] = val if mode == "输入数值" else "实配/OK"
+    input_results[dim] = val if mode in ("输入数值", "OK/NG") else "实配/OK"
     validation_results[dim] = {"mode": mode, "val": val, "ok_ng": ok_ng}
 
 st.markdown("<br>", unsafe_allow_html=True)
@@ -184,7 +193,9 @@ try:
                         val = str(row_data.get(dim, ""))
                         if val == "nan" or val.strip() == "": val = ""
                         
-                        if val == "实配/OK":
+                        if dim in OK_NG_INSPECTIONS and val in ("OK", "NG"):
+                            col_values.append(val)
+                        elif val == "实配/OK":
                             col_values.append("实配/OK")
                         elif val != "":
                             ok_ng = judge_dimension(dim, "输入数值", val)
